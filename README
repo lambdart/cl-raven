@@ -1,0 +1,226 @@
+;;;
+;;; README for Project Nevermore
+;;;
+;;; Assorted notes on the purpose, usage, maintenance, history, and future of
+;;; the Nevermore system.
+;;;
+
+
+The Nevermore system is, at present, an experimental simulator for the Explorer
+I (Raven) microcoded CPU and some of the related peripheral hardware (NuPI board
+for hard disk support, System Interface Board for partial screen and keyboard
+emulation, Memory boards etc.) It is hoped that it will one day be capable of
+booting GDOS (the diagnostic operating system).
+
+
+The original core of this project was the result of my desire to have a working
+disassembler for the Raven microcode. After my second attempt in C, I realized
+that the best output format would be as close to the original input format as I
+could manage. The third attempt was again in C, and ran afoul of the list and
+symbol manipulation required when putting together a prototype for such a
+disassembler. The fourth attempt was written over the course of Nov. 7 through
+9, 2003 in CMUCL. This was successful enough that over the Sunday and following
+Monday I was looking through the disassembly of the boot PROM and figuring out
+how certain parts of the code functioned.
+
+On the Tuesday of that next week, I decided that the only way to answer some
+questions as to what parts of the code was doing was to write a simulator, so I
+laid out the first versions of microengine-step and friends. I am writing this
+on Saturday the 15th of November, 2003, and progress has been rapid over the
+past week.
+
+
+The boot PROM starts off with some self-test code for the CPU, which excersizes
+most or all of the on-board hardware and memories, which has been very useful
+since the code is quite unambiguous as to what behavior it expects from the
+system.
+
+As things stand now, the basic microengine appears to be mostly complete, and
+development is concentrating on trying things, seeing what breaks, and figuring
+out how to fix them. The Lisp world is booting and provides some interaction
+(the keyboard is a little messed up, I can't see the modeline on my computer due
+to having a 1280x800 screen, there's no mouse emulation, and so on). GDOS halts
+with the message "*** ERROR WHILE OPENNING  /dev/monitor  FILE ***" and the
+number 00000757.
+
+There is now an X interface which is in some ways spectacularly inefficient,
+but still a nice thing to have. To set it up, you run (nevermore::start-x) and
+(nevermore::init-window). To close it down, run (nevermore::finish-x). While the
+X interface is running, the system will not check for keyboard busy-loops (so
+that the X interface can do its thing instead).
+
+
+There has been a recent reorganization involving moving most of the
+Raven-specific code to a new package. There are still a few places where further
+cleanup is needed (mostly around the nubus implementation). Note that the
+microengine control is now in the :raven package, while the ROM loader and
+screenshot functions are still in :nevermore.
+
+A new feature is the addition of the ability to dump a screenshot as text. After
+loading the ROMs, do (nevermore::sib-init-character-recognizer). Then, when you
+run into a keyboard busy-loop, do (nevermore::sib-text-screenshot). This will
+print a 126 by 61 character representation of the contents of the framebuffer.
+Note that this only works for output from the STBM, PRIM (MENU), EXPT, and GDOS.
+Text output from Lisp uses a different font, and thus doesn't work with the
+recognizer.
+
+Another new feature is the addition of a streamlined method for stuffing
+keystrokes into the receive buffer. To set it up, do
+(nevermore::sib-init-keypress-stuffer). Then, when you run into a keyboard
+busy-loop, do (nevermore::sib-keyboard-stuff-keypress <character>), substituting
+an appropriate character (digit, upper-case character, #\Tab, or #\Return. This
+will put a down-and-up key transition pair into the receive buffer on the System
+Interface Board.
+
+Before you start, you may want to edit the three defvars at the top of
+nupi-nubus.lisp to reflect the location of your disk images. Yes, you need three
+disk images now; the same ones that Meroko uses should suffice.
+
+
+
+The system now has an ASDF definition for :nevermore in nevermore.asd. The usual
+deal applies:
+
+    (load "nevermore.asd")
+    (asdf:operate 'asdf:load-op :nevermore)
+
+At this point, switch to the nevermore package:
+
+    (in-package :nevermore)
+
+Now set the value of *rom-file-path* to the location of your ROM files and then
+load them:
+
+    (setf *rom-file-path* #p"/path/to/E1_eproms/")
+    (load-romfiles)
+
+And set up your hard drive image files:
+
+    (setf *nupi-scsi0-0-disk-file* #p"/path/to/explorerI_diskDumps/explScsi0Dr0.dsk")
+    (setf *nupi-scsi0-1-disk-file* #p"/path/to/explorerI_diskDumps/explScsi0Dr1.dsk")
+    (setf *nupi-scsi2-0-disk-file* #p"/path/to/explorerI_diskDumps/explScsi2.dsk")
+
+Next, if you aren't using the CLX interface, initialize the character recognizer
+(so you can see what's going on later) and the keypress stuffer (so you can
+control what's going on later):
+
+    (sib-init-character-recognizer)
+    (sib-init-keypress-stuffer)
+
+At this point it is time to initialize the X interface if you want it (if you
+don't, the old-style keyboard busy-loop break and text screenshot should still
+work):
+
+    (start-x)
+    (init-window)
+
+(when you are done with the X interface, call (nevermore::finish-x).)
+
+From here on out, we want to be in the raven package:
+
+    (in-package :raven)
+
+Next, reset the microengine to the start state.
+
+    (microengine-initialize)
+
+To have the simulator execute a single microinstruction, call microengine-step
+with no arguments:
+
+    (microengine-step)
+
+The system should respond by printing:
+
+    L-0 Inhibited.
+    L-0 ((M-0 TEST-SYNCH) SETZ)
+
+If it doesn't, something went wrong.
+
+To have the simulator execute a number of instructions in turn, call
+microengine-run-to with an argument of the micro-pc to stop at:
+
+    (microengine-run-to 85)
+
+The function microengine-step will output the disassembly of the instruction
+interpreted, and the disassembly of the next instruction to interpret (after
+applying any OA-register effects). The return value is the address of the next
+instruction to be read from I-Memory (either the PROM or the real memory space).
+
+The invocation (microengine-run-to 171) will run the microengine until shortly
+before the start of M-Memory tests.
+
+The invocation (microengine-run-to 395) will run the microengine until the start
+of the multiply/divide tests.
+
+The invocation (microengine-run-to -1) will run the microengine until either
+Something Goes Wrong or it hits location 40 (which will happen during the normal
+boot sequence). If it does stop at location 40, just (microengine-step) past it
+and then use microengine-run-to again.
+
+You can get a graphical representation of the contents of the SIB framebuffer by
+issuing the call:
+
+    (nevermore::sib-write-screenshot #p"screenshot.bmp")
+
+You can get a textual representation of the contents of the SIB framebuffer (at
+east until the Lisp world boots) by issuing the call:
+
+    (nevermore::sib-text-screenshot)
+
+If you are in the host debugger, and wish to return to your REPL, execute
+(microengine-force-halt) and continue. At present, microengine-force-halt
+operates by modifying the next fetched microinstruction to enable the HALT bit,
+which will cause microengine-run-to to stop. In the future, this will likely be
+changed to involve a separate flag, so as not to interfere with parity checking
+and the like.
+
+The emulator can detect when the system is waiting for a keypress within the
+STBM, startup menu, and EXPT load. When this occurs and the X interface is not
+active, it will break to the debugger from within an I/O handler. At this point
+it can be useful to look at a text screenshot (see above) and possibly stuff a
+keypress into the receive buffer. The keyboard stuffer is quite limited, and
+will only accept digits, upper-case characters, #\Tab, and #\Return key.
+
+    (nevermore::sib-keyboard-stuff-keypress #\A)
+
+This should be sufficient to get you started. Now you too can see Nevermore fail
+the EXPT tests. Enjoy!
+
+
+Thanks to the following people of freenode #lisp for helping me make nevermore
+faster when I was seriously thinking about switching to C for speed:
+
+    Krystof, rtoy_, mucit, chandler, antifuchs, frodef, bdowning, rahul, Xach.
+
+Thanks to Steve Krueger and Paul Fuqua for answering some questions about
+various features of the Raven CPU, and to the old unlambda lispm-hackers list
+members for getting me into explorer emulation in the first place.
+
+Thanks to... umm... someone for supplying a dump of the last rom in the Raven
+set (where'd that email go?).
+
+Thanks to Daniel Seagraves and Brad Parker for their continuing support.
+
+
+EXPT test status, 2005/Oct/15:
+
++---+------------------------------------+------+
+| 0 | ALU/OBUS                           | pass |
+| 1 | BYTE/BARREL SHIFTER                | pass |
+| 2 | I-MEMORY                           | FAIL |
+| 3 | PUSHDOWN LIST (PDL)                | pass |
+| 4 | M-MEMORY                           | pass |
+| 5 | A-MEMORY                           | pass |
+| 6 | MICRO-PROGRAM COUNTER STACK (UPCS) | pass |
+| 7 | TAG CLASSIFIER                     | pass | (somewhat spammy)
+| 8 | UNMAPPED ACCESSING                 | FAIL | (this is new)
+| 9 | VMA                                | pass |
+| A | GCVF LOGIC                         | pass |
+| B | DISPATCH                           | pass |
+| C | MACROCODE DECODE                   | pass |
+| D | EVENT POSTING                      | FAIL |
+| E | INSTRUCTION STREAM HARDWARE        | pass |
+| F | MEMORY CYCLE ABORT                 | FAIL |
++---+------------------------------------+------+
+
+;;; EOF

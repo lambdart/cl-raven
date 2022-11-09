@@ -1,0 +1,133 @@
+;;;
+;;; sib-graphics-nubus.lisp
+;;;
+;;; graphics framebuffer emulation on the SIB board.
+;;;
+
+(in-package :nevermore)
+
+(declaim (inline write-framebuffer))
+(defun write-framebuffer (address byte)
+  (setf (aref *sib-framebuffer* address) byte)
+  (draw-byte byte address))
+
+(defun sib-graphics-read (address width)
+  (setf *inhibit-nubus-trace* t)
+  (cond ((eq width :byte)
+	 (setf (aref *memory-data*)
+	       (dpb (aref *sib-framebuffer* address)
+		    (byte 8 (* 8 (logand 3 address)))
+		    0)))
+	((eq width :half)
+	 (setf (aref *memory-data*)
+	       (dpb (aref *sib-framebuffer* (1+ address))
+		    (byte 8 (* 8 (1+ (logand 2 address))))
+		    (dpb (aref *sib-framebuffer* address)
+			 (byte 8 (* 8 (logand 2 address)))
+			 0))))
+	((eq width :word)
+	 (setf (aref *memory-data*)
+	       (dpb (aref *sib-framebuffer* (+ address 3)) (byte 8 24)
+		    (dpb (aref *sib-framebuffer* (+ address 2)) (byte 8 16)
+			 (dpb (aref *sib-framebuffer* (+ address 1)) (byte 8 8)
+			      (aref *sib-framebuffer* address))))))
+	(t (error "Bogus width")))
+  (values))
+
+(defun sib-graphics-write (address width)
+  (setf *inhibit-nubus-trace* t)
+  (cond ((eq width :byte)
+	 (write-framebuffer address
+			    (ldb (byte 8 (* 8 (logand 3 address)))
+				 (aref *memory-data*))))
+	((eq width :half)
+	 (write-framebuffer (+ address 1)
+			    (ldb (byte 8 (* 8 (1+ (logand 2 address))))
+				 (aref *memory-data*)))
+	 (write-framebuffer (+ address 0)
+			    (ldb (byte 8 (* 8 (logand 2 address)))
+				 (aref *memory-data*))))
+	((eq width :word)
+	 (write-framebuffer (+ address 3)
+			    (ldb (byte 8 24) (aref *memory-data*)))
+	 (write-framebuffer (+ address 2)
+			    (ldb (byte 8 16) (aref *memory-data*)))
+	 (write-framebuffer (+ address 1)
+			    (ldb (byte 8  8) (aref *memory-data*)))
+	 (write-framebuffer (+ address 0)
+			    (ldb (byte 8  0) (aref *memory-data*))))
+	(t (error "Bogus width")))
+  (values))
+
+(declaim (type (simple-array (function) (*)) *sib-logical-operations*))
+(defvar *sib-logical-operations* (make-array '(#x10)))
+
+#|
+;; Old version
+(setf (aref *sib-logical-operations*  0) #'(lambda (d s) (declare (ignorable d s)) 0))
+(setf (aref *sib-logical-operations*  1) #'(lambda (d s)                           (lognor d s)))
+(setf (aref *sib-logical-operations*  2) #'(lambda (d s)                           (logand s (logxor #xff d))))
+(setf (aref *sib-logical-operations*  3) #'(lambda (d s) (declare (ignorable   s)) (logxor #xff d)))
+(setf (aref *sib-logical-operations*  4) #'(lambda (d s)                           (logand d (logxor #xff s))))
+(setf (aref *sib-logical-operations*  5) #'(lambda (d s) (declare (ignorable d  )) (logxor #xff s)))
+(setf (aref *sib-logical-operations*  6) #'(lambda (d s)                           (logxor d s)))
+(setf (aref *sib-logical-operations*  7) #'(lambda (d s)                           (lognand d s)))
+(setf (aref *sib-logical-operations*  8) #'(lambda (d s)                           (logand d s)))
+(setf (aref *sib-logical-operations*  9) #'(lambda (d s)                           (logxor #xff (logxor d s))))
+(setf (aref *sib-logical-operations* 10) #'(lambda (d s) (declare (ignorable d  )) s))
+(setf (aref *sib-logical-operations* 11) #'(lambda (d s)                           (logior s (logxor #xff d))))
+(setf (aref *sib-logical-operations* 12) #'(lambda (d s) (declare (ignorable   s)) d))
+(setf (aref *sib-logical-operations* 13) #'(lambda (d s)                           (logior d (logxor #xff s))))
+(setf (aref *sib-logical-operations* 14) #'(lambda (d s)                           (logior d s)))
+(setf (aref *sib-logical-operations* 15) #'(lambda (d s) (declare (ignorable d s)) #xff))
+|#
+
+;; New version
+(setf (aref *sib-logical-operations*  0) #'(lambda (d s) (logand #xff (boole boole-clr   d s))))
+(setf (aref *sib-logical-operations*  1) #'(lambda (d s) (logand #xff (boole boole-nor   d s))))
+(setf (aref *sib-logical-operations*  2) #'(lambda (d s) (logand #xff (boole boole-andc1 d s))))
+(setf (aref *sib-logical-operations*  3) #'(lambda (d s) (logand #xff (boole boole-c1    d s))))
+(setf (aref *sib-logical-operations*  4) #'(lambda (d s) (logand #xff (boole boole-andc2 d s))))
+(setf (aref *sib-logical-operations*  5) #'(lambda (d s) (logand #xff (boole boole-c2    d s))))
+(setf (aref *sib-logical-operations*  6) #'(lambda (d s) (logand #xff (boole boole-xor   d s))))
+(setf (aref *sib-logical-operations*  7) #'(lambda (d s) (logand #xff (boole boole-nand  d s))))
+(setf (aref *sib-logical-operations*  8) #'(lambda (d s) (logand #xff (boole boole-and   d s))))
+(setf (aref *sib-logical-operations*  9) #'(lambda (d s) (logand #xff (boole boole-eqv   d s))))
+(setf (aref *sib-logical-operations* 10) #'(lambda (d s) (logand #xff (boole boole-2     d s))))
+(setf (aref *sib-logical-operations* 11) #'(lambda (d s) (logand #xff (boole boole-orc1  d s))))
+(setf (aref *sib-logical-operations* 12) #'(lambda (d s) (logand #xff (boole boole-1     d s))))
+(setf (aref *sib-logical-operations* 13) #'(lambda (d s) (logand #xff (boole boole-orc2  d s))))
+(setf (aref *sib-logical-operations* 14) #'(lambda (d s) (logand #xff (boole boole-ior   d s))))
+(setf (aref *sib-logical-operations* 15) #'(lambda (d s) (logand #xff (boole boole-set   d s))))
+
+(defun sib-perform-logical-operation (d s m)
+  (let ((r (funcall (aref *sib-logical-operations*
+			  (logand #x0f *sib-graphics-logical-operation*))
+		    d s)))
+    (logior (logand d m)
+	    (logand r (logxor m #xff)))))
+
+(defun sib-perform-and-store-logical-operation (address)
+  (write-framebuffer address
+		     (sib-perform-logical-operation
+		      (aref *sib-framebuffer* address)
+		      (ldb (byte 8 (* 8 (logand 3 address)))
+			   (aref *memory-data*))
+		      (ldb (byte 8 (* 8 (logand 3 address)))
+			   (aref *sib-graphics-mask-register*)))))
+
+(defun sib-graphics-read-modify-write (address width)
+  (cond ((eq width :byte)
+	 (sib-perform-and-store-logical-operation address))
+	((eq width :half)
+	 (sib-perform-and-store-logical-operation address)
+	 (sib-perform-and-store-logical-operation (1+ address)))
+	((eq width :word)
+	 (sib-perform-and-store-logical-operation (+ address 3))
+	 (sib-perform-and-store-logical-operation (+ address 2))
+	 (sib-perform-and-store-logical-operation (+ address 1))
+	 (sib-perform-and-store-logical-operation (+ address 0)))
+	(t (error "Bogus width")))
+  (values))
+
+;;; EOF
